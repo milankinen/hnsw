@@ -38,3 +38,12 @@ target_link_libraries(
 )
 include(GoogleTest)
 gtest_discover_tests(hnsw_tests)
+
+## App target for development
+add_executable(dev
+    main.cpp)
+
+target_link_libraries(
+    dev
+    hnsw
+)
