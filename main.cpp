@@ -5,25 +5,25 @@
 
 using namespace std;
 
-std::string stats_str(const hnsw::LayerStats &stats) {
+/*std::string stats_str(const hnsw::LayerStats &stats) {
   std::ostringstream s;
-  s << "probability: " << stats.probability << " ";
-  s << "bytes_per_element: " << stats.bytes_per_element << " ";
-  s << "estimated_n_elements: " << stats.estimated_n_elements << " ";
+  s << "Probability: " << stats.probability << " ";
+  s << "BytesPerElement: " << stats.bytes_per_element << " ";
+  s << "EstimatedTotalElements: " << stats.estimated_n_elements << " ";
   s << "estimated_total_gb: " << (stats.estimated_total_bytes / 1024) / 1024. / 1024.;
   return s.str();
-}
+}*/
 
 void print_index_stats(uint32_t dim, uint32_t M) {
-  auto billion = 1000000000;
+  /*auto billion = 1000000000;
   cout << "Index: " << billion << " elements, dim = " << dim << ", M = " << M << endl;
-  hnsw::Index index(billion, 512, 48);
+  hnsw::Index index(billion, dim, M);
   cout << "max layers: " << index.layer_stats_.size() << endl;
   cout << "Layers:: " << endl;
   for (const auto &stats: index.layer_stats_) {
     cout << stats_str(stats) << endl;
   }
-  cout << endl;
+  cout << endl;*/
 }
 
 int main(int argc, const char **argv) {

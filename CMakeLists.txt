@@ -24,7 +24,9 @@ FetchContent_MakeAvailable(googletest)
 ## Library target
 include_directories(src)
 add_library(hnsw
-    src/hnsw.cpp)
+    src/hnsw.cpp
+    src/ElementManager.cpp
+    )
 
 ## Tests target
 enable_testing()
