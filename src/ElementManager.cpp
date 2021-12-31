@@ -64,7 +64,7 @@ ElementManager *ElementManager::Create(const hnsw::IndexParams &params, size_t b
     memcpy(levels + i, &level, sizeof(Level));
   }
   // Allocate offsets for fast memory lookups
-  auto *offsets = (uint64_t *) malloc(params.MaxElems * sizeof(uint64_t));
+  auto *offsets = (void **) malloc(params.MaxElems * sizeof(void *));
 
   // Allocate memory for each Index + 25% extra in case some layer(s) require more than expected
   // Using single block so that we can switch the implementation to mmap in future
@@ -86,25 +86,27 @@ ElementManager *ElementManager::Create(const hnsw::IndexParams &params, size_t b
 }
 
 ElementManager::ElementManager(const IndexParams &params, Level *levels, int n_levels,
-                               uint64_t *offsets,
+                               void **lookup,
                                uint8_t *blocks,
                                size_t block_size_bytes,
                                size_t n_free_blocks)
     : rnd_(1337),
       index_params_(params),
+      n_links_per_level_((int) params.M),
       n_levels_(n_levels),
       levels_(levels),
       blocks_(blocks),
       block_size_bytes_(block_size_bytes),
       n_free_blocks_(n_free_blocks),
       deleted_head_(nullptr),
-      next_elem_id_(0),
-      elem_offsets_(offsets) {
+      next_elem_id_(1),
+      n_elements_(0),
+      elem_lookup_(lookup) {
 }
 
-hnsw::id_t ElementManager::AllocateNextElement() {
+hnsw::id_t ElementManager::AllocateNextElement(uint32_t external_id) {
   if (deleted_head_ != nullptr) {
-    auto id = deleted_head_->Id;
+    auto reused_id = deleted_head_->Id;
     auto level_idx = deleted_head_->Level;
     auto next_id = deleted_head_->NextId;
     auto *level = levels_ + level_idx;
@@ -113,16 +115,15 @@ hnsw::id_t ElementManager::AllocateNextElement() {
     }
     level->DeletedHead = nullptr;
     if (next_id != NoElement) {
-      auto *next_deleted = (DeletedElement *) elem_ptr(next_id);
+      auto *next_deleted = (DeletedElement *) GetPtr(next_id);
       next_deleted->PrevId = NoElement;
       deleted_head_ = next_deleted;
       levels_[next_deleted->Level].DeletedHead = next_deleted;
     } else {
       deleted_head_ = nullptr;
     }
-    auto *header = (ElementHeader *) elem_ptr(id);
-    header->Level = level_idx;
-    return id;
+    initialize_element(GetPtr(reused_id), level, external_id);
+    return reused_id;
   }
 
   auto *level = next_random_level();
@@ -134,18 +135,18 @@ hnsw::id_t ElementManager::AllocateNextElement() {
     level->BlockPtr = blocks_ + (n_free_blocks_ * block_size_bytes_);
     level->BlockFreeBytes = block_size_bytes_;
   }
-  auto element_id = next_elem_id_++;
-  auto *header = (ElementHeader *) level->BlockPtr;
-  header->Level = level->Index;
-  elem_offsets_[element_id] = level->BlockPtr - blocks_;
+  auto new_id = next_elem_id_++;
+  auto *ptr = level->BlockPtr;
   level->BlockPtr += level->BytesPerElement;
   level->BlockFreeBytes -= level->BytesPerElement;
-  return element_id;
+  elem_lookup_[new_id - 1] = ptr;
+  initialize_element(ptr, level, external_id);
+  return new_id;
 }
 
 void ElementManager::FreeElement(hnsw::id_t id) {
-  auto *header = (ElementHeader *) elem_ptr(id);
-  auto level_idx = header->Level;
+  auto *header = GetHeader(GetPtr(id));
+  auto level_idx = header->GetLevel();
   auto *level = levels_ + level_idx;
   // First find next and previous element from the global delete list
   DeletedElement *next = nullptr;
@@ -154,7 +155,7 @@ void ElementManager::FreeElement(hnsw::id_t id) {
     // Easy case: level already have deletions, so next element is the current
     // head of level deletion list and previous can be found by following the list
     next = level->DeletedHead;
-    prev = next->PrevId != NoElement ? (DeletedElement *) elem_ptr(next->PrevId) : nullptr;
+    prev = next->PrevId != NoElement ? (DeletedElement *) GetPtr(next->PrevId) : nullptr;
   } else {
     // Level does not deletions yet, need to find previous and next by traversing
     // the levels (higher levels are always placed before so trying to find next
@@ -193,10 +194,6 @@ void ElementManager::FreeElement(hnsw::id_t id) {
   level->DeletedHead = node;
 }
 
-void *ElementManager::elem_ptr(hnsw::id_t id) {
-  return blocks_ + elem_offsets_[id];
-}
-
 ElementManager::Level *ElementManager::next_random_level() {
   double f = rnd_() / double(std::mt19937::max());
   for (int i = 0; i < n_levels_; i++) {
@@ -207,4 +204,38 @@ ElementManager::Level *ElementManager::next_random_level() {
     f -= p;
   }
   return levels_ + (n_levels_ - 1);
+}
+
+void *hnsw::ElementManager::GetPtr(id_t id) const {
+  return elem_lookup_[id - 1];
+}
+
+hnsw::ElementHeader *ElementManager::GetHeader(void *ptr) const {
+  return (ElementHeader *) ptr;
+}
+
+float_t *ElementManager::GetData(void *ptr) const {
+  return (float_t *) ((uint8_t *) ptr + sizeof(ElementHeader));
+}
+
+hnsw::LevelLinks ElementManager::GetLinks(void *ptr, int level) const {
+  int count = n_links_per_level_;
+  return LevelLinks{
+      .data = (Link * )((uint8_t *) ptr + sizeof(ElementHeader) + ((n_levels_ - level) * count * sizeof(Link))),
+      .count = count
+  };
+}
+
+bool hnsw::ElementManager::IsEmpty() const {
+  return n_elements_ == 0;
+}
+
+void ElementManager::initialize_element(void *ptr, const ElementManager::Level *level, uint32_t external_id) const {
+  auto* header = GetHeader(ptr);
+  header->ExternalId = external_id;
+  header->Flags = level->Index;
+  for (int i = 0; i < level->Index; i++) {
+    auto links = GetLinks(ptr, i);
+    memset(links.data, NoElement, links.count * sizeof(Link));
+  }
 }

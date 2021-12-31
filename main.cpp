@@ -1,4 +1,4 @@
-#include "hnsw.h"
+#include "Index.h"
 #include <iostream>
 #include <libc.h>
 #include <sstream>

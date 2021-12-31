@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "hnsw.h"
+#include "Index.h"
 
 TEST(ExampleTest, Greet) {
   EXPECT_STREQ("tsers!", "tsers!");
