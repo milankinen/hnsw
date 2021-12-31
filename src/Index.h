@@ -12,11 +12,11 @@ namespace hnsw {
 
   public:
 
-    static const id_t Failure = UINT32_MAX;
+    static const element_id_t Failure = UINT32_MAX;
 
     Index(const IndexParams &params, ElementManager *elems);
 
-    id_t Insert(float_t *data, uint32_t external_id);
+    element_id_t Insert(float_t *data, uint32_t external_id);
 
   private:
 

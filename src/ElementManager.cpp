@@ -104,7 +104,7 @@ ElementManager::ElementManager(const IndexParams &params, Level *levels, int n_l
       elem_lookup_(lookup) {
 }
 
-hnsw::id_t ElementManager::AllocateNextElement(uint32_t external_id) {
+hnsw::element_id_t ElementManager::AllocateNextElement(uint32_t external_id) {
   if (deleted_head_ != nullptr) {
     auto reused_id = deleted_head_->Id;
     auto level_idx = deleted_head_->Level;
@@ -144,9 +144,9 @@ hnsw::id_t ElementManager::AllocateNextElement(uint32_t external_id) {
   return new_id;
 }
 
-void ElementManager::FreeElement(hnsw::id_t id) {
-  auto *header = GetHeader(GetPtr(id));
-  auto level_idx = header->GetLevel();
+void ElementManager::FreeElement(element_id_t id) {
+  auto *ptr = GetPtr(id);
+  auto level_idx = GetLevel(ptr);
   auto *level = levels_ + level_idx;
   // First find next and previous element from the global delete list
   DeletedElement *next = nullptr;
@@ -169,9 +169,9 @@ void ElementManager::FreeElement(hnsw::id_t id) {
   }
 
   // Create delete list node by reusing actual element data - it's not used
-  // so just rewrite the element header (+ some vector data) with delete
+  // so just rewrite the element ptr (+ some vector data) with delete
   // list node metadata
-  auto *node = (DeletedElement *) header;
+  auto *node = (DeletedElement *) ptr;
   node->Id = id;
   node->Level = level_idx;
   node->NextId = next != nullptr ? next->Id : NoElement;
@@ -194,24 +194,8 @@ void ElementManager::FreeElement(hnsw::id_t id) {
   level->DeletedHead = node;
 }
 
-ElementManager::Level *ElementManager::next_random_level() {
-  double f = rnd_() / double(std::mt19937::max());
-  for (int i = 0; i < n_levels_; i++) {
-    auto p = levels_[i].Probability;
-    if (f < p) {
-      return levels_ + i;
-    }
-    f -= p;
-  }
-  return levels_ + (n_levels_ - 1);
-}
-
-void *hnsw::ElementManager::GetPtr(id_t id) const {
+void *hnsw::ElementManager::GetPtr(element_id_t id) const {
   return elem_lookup_[id - 1];
-}
-
-hnsw::ElementHeader *ElementManager::GetHeader(void *ptr) const {
-  return (ElementHeader *) ptr;
 }
 
 float_t *ElementManager::GetData(void *ptr) const {
@@ -230,8 +214,30 @@ bool hnsw::ElementManager::IsEmpty() const {
   return n_elements_ == 0;
 }
 
+
+int hnsw::ElementManager::GetLevel(void *ptr) {
+  return ((ElementHeader *) ptr)->Flags;
+}
+
+uint32_t hnsw::ElementManager::GetExternalId(void *ptr) {
+  return ((ElementHeader *) ptr)->ExternalId;
+}
+
+
+ElementManager::Level *ElementManager::next_random_level() {
+  double f = rnd_() / double(std::mt19937::max());
+  for (int i = 0; i < n_levels_; i++) {
+    auto p = levels_[i].Probability;
+    if (f < p) {
+      return levels_ + i;
+    }
+    f -= p;
+  }
+  return levels_ + (n_levels_ - 1);
+}
+
 void ElementManager::initialize_element(void *ptr, const ElementManager::Level *level, uint32_t external_id) const {
-  auto* header = GetHeader(ptr);
+  auto *header = (ElementHeader *) ptr;
   header->ExternalId = external_id;
   header->Flags = level->Index;
   for (int i = 0; i < level->Index; i++) {

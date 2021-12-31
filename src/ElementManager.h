@@ -6,15 +6,11 @@
 
 namespace hnsw {
 
-  typedef uint32_t id_t;
+  typedef uint32_t element_id_t;
 
   struct ElementHeader {
-    id_t ExternalId;
+    element_id_t ExternalId;
     uint32_t Flags;
-
-    inline int GetLevel() const {
-      return Flags;
-    }
   };
 
   struct Link {
@@ -30,19 +26,22 @@ namespace hnsw {
 
   class ElementManager {
   public:
-    static const hnsw::id_t NoElement = 0;
+    static const element_id_t NoElement = 0;
 
     static ElementManager *Create(const IndexParams &params, size_t block_size_bytes);
 
-    hnsw::id_t AllocateNextElement(uint32_t external_id);
+    hnsw::element_id_t AllocateNextElement(uint32_t external_id);
 
-    void FreeElement(hnsw::id_t id);
+    void FreeElement(element_id_t id);
 
-    inline void *GetPtr(id_t id) const;
+    inline void *GetPtr(element_id_t id) const;
 
-    inline ElementHeader *GetHeader(void *ptr) const;
+    static inline int GetLevel(void *ptr);
+
+    static inline uint32_t GetExternalId(void *ptr);
 
     inline float_t *GetData(void *ptr) const;
+
 
     inline LevelLinks GetLinks(void *ptr, int level) const;
 
