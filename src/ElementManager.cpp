@@ -2,6 +2,9 @@
 
 using hnsw::ElementManager;
 
+#define LEVEL_MASK 0x7FFFFFFF
+#define VISITED_BIT 0x80000000
+
 static auto get_level_probabilities(const hnsw::IndexParams &params) {
   std::vector<double> probabilities;
   auto mL = 1. / log(params.M);
@@ -29,7 +32,7 @@ ElementManager *ElementManager::Create(const hnsw::IndexParams &params, size_t b
   // memory allocation yet, we need to first calculate statistics for
   // all levels to get estimate for the total block/memory consumption
   auto level_p = get_level_probabilities(params);
-  int n_levels = level_p.size();
+  int n_levels = (int) level_p.size();
   auto *levels = (Level *) malloc(sizeof(Level) * n_levels);
   if (levels == nullptr) {
     return nullptr;
@@ -48,14 +51,12 @@ ElementManager *ElementManager::Create(const hnsw::IndexParams &params, size_t b
         estimated_total_bytes == 0 ? 0 : estimated_total_bytes / block_size_bytes +
                                          (estimated_total_bytes % block_size_bytes > 0 ? 1 : 0);
     Level level{
-        // set constants
         .Index = i,
         .Probability = p,
         .BytesPerElement = bytes_per_element,
         .EstimatedTotalBytes = estimated_total_bytes,
         .EstimatedTotalElements = estimated_total_elements,
         .EstimatedTotalBlocks = estimated_total_blocks,
-        // initialize Index memory management bookkeeping
         .BlockPtr = nullptr,
         .BlockFreeBytes = 0,
         .DeletedHead = nullptr,
@@ -68,7 +69,7 @@ ElementManager *ElementManager::Create(const hnsw::IndexParams &params, size_t b
 
   // Allocate memory for each Index + 25% extra in case some layer(s) require more than expected
   // Using single block so that we can switch the implementation to mmap in future
-  const auto n_blocks = size_t(get_total_estimated_n_blocks(levels, n_levels) * 1.25);
+  const auto n_blocks = size_t((double) get_total_estimated_n_blocks(levels, n_levels) * 1.25);
   auto n_free_blocks = n_blocks;
   auto *blocks = (uint8_t *) malloc(n_blocks * block_size_bytes);
   if (blocks == nullptr) {
@@ -90,37 +91,41 @@ ElementManager::ElementManager(const IndexParams &params, Level *levels, int n_l
                                uint8_t *blocks,
                                size_t block_size_bytes,
                                size_t n_free_blocks)
-    : rnd_(1337),
-      index_params_(params),
-      n_links_per_level_((int) params.M),
+    : rnd_(1337), // NOLINT
+      n_links_per_level_(int(params.M)),
+      data_size_bytes_(int(params.Dimension * sizeof(float_t))),
       n_levels_(n_levels),
       levels_(levels),
       blocks_(blocks),
       block_size_bytes_(block_size_bytes),
       n_free_blocks_(n_free_blocks),
-      deleted_head_(nullptr),
+      deleted_list_head_(nullptr),
       next_elem_id_(1),
       n_elements_(0),
-      elem_lookup_(lookup) {
+      elem_lookup_(lookup),
+      visited_queue_() {
 }
 
+
+ElementManager::~ElementManager() = default;
+
 hnsw::element_id_t ElementManager::AllocateNextElement(uint32_t external_id) {
-  if (deleted_head_ != nullptr) {
-    auto reused_id = deleted_head_->Id;
-    auto level_idx = deleted_head_->Level;
-    auto next_id = deleted_head_->NextId;
+  if (deleted_list_head_ != nullptr) {
+    auto reused_id = deleted_list_head_->Id;
+    auto level_idx = deleted_list_head_->Level;
+    auto next_id = deleted_list_head_->NextId;
     auto *level = levels_ + level_idx;
     if (level->DeletedHead == level->DeletedTail) {
       level->DeletedTail = nullptr;
     }
     level->DeletedHead = nullptr;
     if (next_id != NoElement) {
-      auto *next_deleted = (DeletedElement *) GetPtr(next_id);
+      auto *next_deleted = (DeletedListNode *) GetPtr(next_id);
       next_deleted->PrevId = NoElement;
-      deleted_head_ = next_deleted;
+      deleted_list_head_ = next_deleted;
       levels_[next_deleted->Level].DeletedHead = next_deleted;
     } else {
-      deleted_head_ = nullptr;
+      deleted_list_head_ = nullptr;
     }
     initialize_element(GetPtr(reused_id), level, external_id);
     return reused_id;
@@ -149,13 +154,13 @@ void ElementManager::FreeElement(element_id_t id) {
   auto level_idx = GetLevel(ptr);
   auto *level = levels_ + level_idx;
   // First find next and previous element from the global delete list
-  DeletedElement *next = nullptr;
-  DeletedElement *prev = nullptr;
+  DeletedListNode *next = nullptr;
+  DeletedListNode *prev = nullptr;
   if (level->DeletedHead != nullptr) {
     // Easy case: level already have deletions, so next element is the current
     // head of level deletion list and previous can be found by following the list
     next = level->DeletedHead;
-    prev = next->PrevId != NoElement ? (DeletedElement *) GetPtr(next->PrevId) : nullptr;
+    prev = next->PrevId != NoElement ? (DeletedListNode *) GetPtr(next->PrevId) : nullptr;
   } else {
     // Level does not deletions yet, need to find previous and next by traversing
     // the levels (higher levels are always placed before so trying to find next
@@ -171,7 +176,7 @@ void ElementManager::FreeElement(element_id_t id) {
   // Create delete list node by reusing actual element data - it's not used
   // so just rewrite the element ptr (+ some vector data) with delete
   // list node metadata
-  auto *node = (DeletedElement *) ptr;
+  auto *node = (DeletedListNode *) ptr;
   node->Id = id;
   node->Level = level_idx;
   node->NextId = next != nullptr ? next->Id : NoElement;
@@ -186,8 +191,8 @@ void ElementManager::FreeElement(element_id_t id) {
   if (level->DeletedHead == level->DeletedTail) {
     level->DeletedTail = node;
   }
-  if (level->DeletedHead == deleted_head_) {
-    deleted_head_ = node;
+  if (level->DeletedHead == deleted_list_head_) {
+    deleted_list_head_ = node;
   }
   // Finally, mark the new delete list node as the head of the
   // original element level
@@ -198,31 +203,31 @@ void *hnsw::ElementManager::GetPtr(element_id_t id) const {
   return elem_lookup_[id - 1];
 }
 
-float_t *ElementManager::GetData(void *ptr) const {
+float_t *ElementManager::GetData(void *ptr) {
   return (float_t *) ((uint8_t *) ptr + sizeof(ElementHeader));
 }
 
-hnsw::LevelLinks ElementManager::GetLinks(void *ptr, int level) const {
-  int count = n_links_per_level_;
-  return LevelLinks{
-      .data = (Link * )((uint8_t *) ptr + sizeof(ElementHeader) + ((n_levels_ - level) * count * sizeof(Link))),
-      .count = count
-  };
+hnsw::Link *ElementManager::GetLinks(void *ptr, int level) const {
+  return (Link * )((uint8_t *) ptr + sizeof(ElementHeader) + data_size_bytes_ +
+                   (level == 0 ? 0 : (((level + 1) * n_links_per_level_ * sizeof(Link)))));
 }
 
-bool hnsw::ElementManager::IsEmpty() const {
-  return n_elements_ == 0;
+int ElementManager::GetLevel(void *ptr) {
+  return ((ElementHeader *) ptr)->Flags & LEVEL_MASK; // NOLINT
 }
 
-
-int hnsw::ElementManager::GetLevel(void *ptr) {
-  return ((ElementHeader *) ptr)->Flags;
+bool ElementManager::IsVisited(void *ptr) {
+  return (((ElementHeader *) ptr)->Flags & VISITED_BIT) != 0;
 }
 
-uint32_t hnsw::ElementManager::GetExternalId(void *ptr) {
+void ElementManager::MarkVisited(void *ptr) {
+  ((ElementHeader *) ptr)->Flags |= VISITED_BIT;
+  visited_queue_.push(ptr);
+}
+
+uint32_t ElementManager::GetExternalId(void *ptr) {
   return ((ElementHeader *) ptr)->ExternalId;
 }
-
 
 ElementManager::Level *ElementManager::next_random_level() {
   double f = rnd_() / double(std::mt19937::max());
@@ -241,7 +246,21 @@ void ElementManager::initialize_element(void *ptr, const ElementManager::Level *
   header->ExternalId = external_id;
   header->Flags = level->Index;
   for (int i = 0; i < level->Index; i++) {
-    auto links = GetLinks(ptr, i);
-    memset(links.data, NoElement, links.count * sizeof(Link));
+    auto *links = GetLinks(ptr, i);
+    int count = (i == 0 ? 2 : 1) * n_links_per_level_;
+    memset(links, Link::NotUsed, count * sizeof(Link));
   }
 }
+
+void ElementManager::ClearVisitedMarkers() {
+  while (!visited_queue_.empty()) {
+    auto *ptr = visited_queue_.front();
+    ((ElementHeader *) ptr)->Flags |= ~VISITED_BIT;
+    visited_queue_.pop();
+  }
+}
+
+int ElementManager::GetMaxLinks(int level) const {
+  return level == 0 ? 2 * n_links_per_level_ : n_links_per_level_;
+}
+
