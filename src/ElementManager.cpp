@@ -102,8 +102,7 @@ ElementManager::ElementManager(const IndexParams &params, Level *levels, int n_l
       deleted_list_head_(nullptr),
       next_elem_id_(1),
       n_elements_(0),
-      elem_lookup_(lookup),
-      visited_queue_() {
+      elem_lookup_(lookup) {
 }
 
 
@@ -173,8 +172,8 @@ void ElementManager::FreeElement(element_id_t id) {
     }
   }
 
-  // Create delete list node by reusing actual element data - it's not used
-  // so just rewrite the element ptr (+ some vector data) with delete
+  // Create delete list node by reusing actual element get_container - it's not used
+  // so just rewrite the element ptr (+ some vector get_container) with delete
   // list node metadata
   auto *node = (DeletedListNode *) ptr;
   node->Id = id;
@@ -207,23 +206,23 @@ float_t *ElementManager::GetData(void *ptr) {
   return (float_t *) ((uint8_t *) ptr + sizeof(ElementHeader));
 }
 
+int ElementManager::GetMaxLinks(int level) const {
+  return level == 0 ? 2 * n_links_per_level_ : n_links_per_level_;
+}
+
 hnsw::Link *ElementManager::GetLinks(void *ptr, int level) const {
   return (Link * )((uint8_t *) ptr + sizeof(ElementHeader) + data_size_bytes_ +
                    (level == 0 ? 0 : (((level + 1) * n_links_per_level_ * sizeof(Link)))));
+}
+
+void ElementManager::SetOutgoingLink(element_id_t id, Link &link, element_id_t outgoing_id) {
+  link.OutgoingId = outgoing_id;
 }
 
 int ElementManager::GetLevel(void *ptr) {
   return ((ElementHeader *) ptr)->Flags & LEVEL_MASK; // NOLINT
 }
 
-bool ElementManager::IsVisited(void *ptr) {
-  return (((ElementHeader *) ptr)->Flags & VISITED_BIT) != 0;
-}
-
-void ElementManager::MarkVisited(void *ptr) {
-  ((ElementHeader *) ptr)->Flags |= VISITED_BIT;
-  visited_queue_.push(ptr);
-}
 
 uint32_t ElementManager::GetExternalId(void *ptr) {
   return ((ElementHeader *) ptr)->ExternalId;
@@ -250,17 +249,5 @@ void ElementManager::initialize_element(void *ptr, const ElementManager::Level *
     int count = (i == 0 ? 2 : 1) * n_links_per_level_;
     memset(links, Link::NotUsed, count * sizeof(Link));
   }
-}
-
-void ElementManager::ClearVisitedMarkers() {
-  while (!visited_queue_.empty()) {
-    auto *ptr = visited_queue_.front();
-    ((ElementHeader *) ptr)->Flags |= ~VISITED_BIT;
-    visited_queue_.pop();
-  }
-}
-
-int ElementManager::GetMaxLinks(int level) const {
-  return level == 0 ? 2 * n_links_per_level_ : n_links_per_level_;
 }
 

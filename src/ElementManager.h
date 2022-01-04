@@ -33,8 +33,6 @@ namespace hnsw {
 
     void FreeElement(element_id_t id);
 
-    inline int GetMaxLinks(int level) const;
-
     inline void *GetPtr(element_id_t id) const;
 
     static float_t *GetData(void *ptr);
@@ -43,13 +41,11 @@ namespace hnsw {
 
     static inline uint32_t GetExternalId(void *ptr);
 
-    static inline bool IsVisited(void *ptr);
-
-    inline void MarkVisited(void *ptr);
+    inline int GetMaxLinks(int level) const;
 
     inline Link *GetLinks(void *ptr, int level) const;
 
-    void ClearVisitedMarkers();
+    inline void SetOutgoingLink(element_id_t id, Link &link, element_id_t outgoing_id);
 
   private:
 
@@ -93,7 +89,6 @@ namespace hnsw {
     uint32_t next_elem_id_;
     uint32_t n_elements_;
     void **elem_lookup_;
-    std::queue<void *> visited_queue_;
     std::mt19937 rnd_;
   };
 }
