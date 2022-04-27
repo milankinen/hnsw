@@ -5,19 +5,19 @@
 #include <vector>
 #include <unordered_set>
 #include "IndexParams.h"
-#include "ElementManager.h"
+#include "Elements.h"
 
 namespace hnsw {
 
-  class Index {
+  typedef float_t (*distance_function)(float_t *, float_t *, uint32_t n);
 
-    typedef float_t (*distance_function)(float_t *, float_t *, uint32_t n);
+  class Index {
 
   public:
 
     static const element_id_t Failure = UINT32_MAX;
 
-    Index(const IndexParams &params, ElementManager *elems, distance_function get_distance);
+    Index(const IndexParams &params, Elements *elems, distance_function get_distance);
 
     element_id_t Insert(float_t *data, uint32_t external_id);
 
@@ -48,7 +48,6 @@ namespace hnsw {
 
       explicit CandidateQueue(candidate_cmp cmp)
           : std::priority_queue<Candidate, std::vector<Candidate>, candidate_cmp>(cmp) {
-
       }
 
       inline Candidate pop_first() {
@@ -88,7 +87,6 @@ namespace hnsw {
     );
 
     void add_links(
-        float_t *point,
         element_id_t element,
         const CandidateQueue &neighbors,
         int level
@@ -97,7 +95,7 @@ namespace hnsw {
     const distance_function get_distance_;
     const uint32_t dimension_;
     IndexParams params_;
-    ElementManager *elems_;
+    Elements *elems_;
     element_id_t entrypoint_;
 
   };

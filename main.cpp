@@ -16,8 +16,8 @@ using namespace std;
 
 void print_index_stats(uint32_t dim, uint32_t M) {
   /*auto billion = 1000000000;
-  cout << "Index: " << billion << " elements, dim = " << dim << ", M = " << M << endl;
-  hnsw::Index index(billion, dim, M);
+  cout << "LayerState: " << billion << " elements, dim = " << dim << ", M = " << M << endl;
+  hnsw::LayerState index(billion, dim, M);
   cout << "max layers: " << index.layer_stats_.size() << endl;
   cout << "Layers:: " << endl;
   for (const auto &stats: index.layer_stats_) {
@@ -39,7 +39,7 @@ std::string vec_to_str(const std::vector<int> &v) {
 }
 
 int main(int argc, const char **argv) {
-  hnsw::Index::CandidateQueue pq(5, &hnsw::Index::Candidate::cmp_furthest_first);
+  hnsw::Index::CandidateQueue pq(&hnsw::Index::Candidate::cmp_furthest_first);
   pq.push(hnsw::Index::Candidate{
       .Distance = 1,
       .Id = 1
@@ -65,9 +65,8 @@ int main(int argc, const char **argv) {
       .Id = 9
   });
 
-  hnsw::Index::CandidateQueue pq2(pq, hnsw::Index::Candidate::cmp_nearest_first);
-
-
+  hnsw::Index::CandidateQueue pq2(hnsw::Index::Candidate::cmp_nearest_first, pq.get_container());
+  
   while (!pq2.empty()) {
     cout << pq2.top().Id << endl;
     pq2.pop();
