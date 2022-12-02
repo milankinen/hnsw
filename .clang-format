@@ -1,6 +1,0 @@
----
-Language: Cpp
-BasedOnStyle: Google
-ColumnLimit: 100
-IndentWidth: 2
-Standard: c++17
